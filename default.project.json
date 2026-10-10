@@ -1,0 +1,17 @@
+{
+  "name": "StealTheStore",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Config": { "$path": "src/ReplicatedStorage/Config.luau" }
+    },
+    "ServerScriptService": {
+      "$path": "src/ServerScriptService"
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts"
+      }
+    }
+  }
+}
