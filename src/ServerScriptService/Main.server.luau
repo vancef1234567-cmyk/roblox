@@ -1,4 +1,4 @@
--- Steal the Store: round loop, stealing, escaping, robbing, upgrades.
+-- Steal the Store: round loop, stealing, escaping, robbing, security and upgrades.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -6,6 +6,7 @@ local Config = require(ReplicatedStorage:WaitForChild("Config"))
 local MapBuilder = require(script.Parent:WaitForChild("MapBuilder"))
 local GuardAI = require(script.Parent:WaitForChild("GuardAI"))
 local DataService = require(script.Parent:WaitForChild("DataService"))
+local Items = require(script.Parent:WaitForChild("Items"))
 
 local formatMoney = Config.formatMoney
 local RED = Color3.fromRGB(255, 90, 90)
@@ -33,7 +34,7 @@ guardFolder.Parent = workspace
 
 local state = {} -- [Player] = per-player info
 local alarms = {} -- [Player] = time the alarm wears off
-local occupied = {} -- [loot spawn part] = item on it
+local occupied = {} -- [loot spot part] = item model on it
 local guards = {}
 local roundActive = false
 local roundId = 0
@@ -63,6 +64,14 @@ local function bagValue(bag): number
 	return total
 end
 
+local function bagSlots(bag): number
+	local total = 0
+	for _, item in ipairs(bag) do
+		total += item.Slots
+	end
+	return total
+end
+
 local function upgradeValue(kind: string, level: number): number
 	local levels = Config.Upgrades[kind].Levels
 	return levels[math.clamp(level, 1, #levels)].Value
@@ -72,6 +81,10 @@ local function capacity(st): number
 	return upgradeValue("Backpack", st.data.BackpackLevel)
 end
 
+local function freeSlots(st): number
+	return capacity(st) - bagSlots(st.bag)
+end
+
 local function refreshPlayer(player: Player)
 	local st = state[player]
 	if not st then
@@ -79,7 +92,7 @@ local function refreshPlayer(player: Player)
 	end
 	local value = bagValue(st.bag)
 	player:SetAttribute("Capacity", capacity(st))
-	player:SetAttribute("BagCount", #st.bag)
+	player:SetAttribute("BagSlots", bagSlots(st.bag))
 	player:SetAttribute("BagValue", value)
 	player:SetAttribute("BackpackLevel", st.data.BackpackLevel)
 	player:SetAttribute("SpeedLevel", st.data.SpeedLevel)
@@ -153,105 +166,72 @@ end
 -- Loot
 --------------------------------------------------------------------------------
 
-local totalWeight = 0
-for _, def in ipairs(Config.Items) do
-	totalWeight += def.Weight
-end
-
-local function pickItemDef()
-	local roll = math.random() * totalWeight
-	for _, def in ipairs(Config.Items) do
-		roll -= def.Weight
-		if roll <= 0 then
-			return def
-		end
-	end
-	return Config.Items[1]
-end
-
 local spawnLoot
 
-local function onSteal(player: Player, item: BasePart, def, spawnPart: BasePart)
+local function onSteal(player: Player, model: Model, main: BasePart, def, spot: BasePart)
 	local st = state[player]
-	if not isPlaying(st) or item.Parent ~= lootFolder then
+	if not isPlaying(st) or model.Parent ~= lootFolder then
 		return
 	end
 	local root = getRoot(player)
-	if not root or (root.Position - item.Position).Magnitude > 12 then
+	if not root or (root.Position - main.Position).Magnitude > 14 then
 		return
 	end
-	if #st.bag >= capacity(st) then
-		notify(player, "Your bag is full! Escape through an EXIT to cash out.", RED)
+	if freeSlots(st) < def.Slots then
+		if def.Slots > 1 then
+			notify(player, string.format("The %s needs %d bag slots. Escape to empty your bag or upgrade it!", def.Name, def.Slots), RED)
+		else
+			notify(player, "Your bag is full! Get to a GETAWAY VAN to cash out.", RED)
+		end
 		return
 	end
 
-	table.insert(st.bag, { Name = def.Name, Value = def.Value, Rarity = def.Rarity })
-	item:Destroy()
-	occupied[spawnPart] = nil
+	table.insert(st.bag, { Name = def.Name, Value = def.Price, Slots = def.Slots })
+	model:Destroy()
+	occupied[spot] = nil
 	local thisRound = roundId
 	task.delay(Config.LOOT_RESPAWN_TIME, function()
-		if roundActive and roundId == thisRound and not occupied[spawnPart] then
-			spawnLoot(spawnPart)
+		if roundActive and roundId == thisRound and not occupied[spot] then
+			spawnLoot(spot)
 		end
 	end)
 	refreshPlayer(player)
 
-	local rarity = Config.Rarities[def.Rarity]
-	if rarity.Order >= 4 then
-		announce(
-			string.format("%s stole a %s %s! The guards are coming!", player.DisplayName, string.upper(def.Rarity), def.Name),
-			rarity.Color
-		)
+	local rarity = def.Rarity
+	if rarity.Order >= 5 then
+		announce(string.format("%s just stole a %s worth %s! Every guard is coming!", player.DisplayName, def.Name, formatMoney(def.Price)), rarity.Color)
 		raiseAlarm(player)
+	elseif rarity.Order >= 4 then
+		announce(string.format("%s grabbed a %s (%s)!", player.DisplayName, def.Name, formatMoney(def.Price)), rarity.Color)
 	else
-		notify(player, string.format("+ %s (%s)", def.Name, formatMoney(def.Value)), rarity.Color)
+		notify(player, string.format("+ %s (%s)", def.Name, formatMoney(def.Price)), rarity.Color)
 	end
 end
 
-function spawnLoot(spawnPart: BasePart)
-	local def = pickItemDef()
-	local rarity = Config.Rarities[def.Rarity]
-
-	local item = Instance.new("Part")
-	item.Name = def.Name
-	item.Size = def.Size
-	if def.Shape then
-		item.Shape = def.Shape
+function spawnLoot(spot: BasePart)
+	local def = Items.pick(spot:GetAttribute("Category"))
+	if not def then
+		return
 	end
-	item.Color = def.Color
-	item.Material = rarity.Order >= 4 and Enum.Material.Neon or Enum.Material.SmoothPlastic
-	item.Anchored = true
-	item.CanCollide = false
-	item.CFrame = CFrame.new(spawnPart.Position + Vector3.new(0, def.Size.Y / 2, 0))
-	item:SetAttribute("Value", def.Value)
-	item:SetAttribute("Rarity", def.Rarity)
-
-	if rarity.Order >= 3 then
-		local light = Instance.new("PointLight")
-		light.Color = rarity.Color
-		light.Range = 8
-		light.Brightness = 2
-		light.Parent = item
-	end
-	if rarity.Order >= 4 then
-		local sparkles = Instance.new("Sparkles")
-		sparkles.SparkleColor = rarity.Color
-		sparkles.Parent = item
-	end
+	local model, main = Items.build(def, spot.CFrame)
 
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.ActionText = "Steal"
-	prompt.ObjectText = string.format("%s (%s)", def.Name, formatMoney(def.Value))
-	prompt.HoldDuration = rarity.HoldTime
-	prompt.MaxActivationDistance = 8
+	if def.Slots > 1 then
+		prompt.ObjectText = string.format("%s  %s  (%d slots)", def.Name, formatMoney(def.Price), def.Slots)
+	else
+		prompt.ObjectText = string.format("%s  %s", def.Name, formatMoney(def.Price))
+	end
+	prompt.HoldDuration = def.Rarity.HoldTime
+	prompt.MaxActivationDistance = 9
 	prompt.RequiresLineOfSight = false
-	prompt.Parent = item
+	prompt.Parent = main
 	prompt.Triggered:Connect(function(player)
-		onSteal(player, item, def, spawnPart)
+		onSteal(player, model, main, def, spot)
 	end)
 
-	item.Parent = lootFolder
-	occupied[spawnPart] = item
+	model.Parent = lootFolder
+	occupied[spot] = model
 end
 
 --------------------------------------------------------------------------------
@@ -283,7 +263,7 @@ local function onCaught(player: Player)
 		refreshPlayer(player)
 		if roundActive and roundId == thisRound and st.inRound then
 			sendToStore(player)
-			notify(player, "You're out of jail. Back to work!", YELLOW)
+			notify(player, "You made bail. Back to work!", YELLOW)
 		end
 	end)
 end
@@ -301,7 +281,7 @@ local function bank(player: Player, exitName: string)
 	st.data.BestHeist = math.max(st.data.BestHeist, st.roundEarnings)
 	alarms[player] = nil
 	refreshPlayer(player)
-	notify(player, string.format("Escaped through the %s with %d items: +%s!", exitName, count, formatMoney(total)), GREEN)
+	notify(player, string.format("Got away from the %s with %d items: +%s!", exitName, count, formatMoney(total)), GREEN)
 	if total >= 5000 then
 		announce(string.format("%s escaped with %s!", player.DisplayName, formatMoney(total)), GREEN)
 	end
@@ -328,12 +308,19 @@ local function onRob(robber: Player, victim: Player)
 		notify(robber, "Your sticky fingers need a break...", RED)
 		return
 	end
-	if #rs.bag >= capacity(rs) then
-		notify(robber, "Your bag is full!", RED)
+	local free = freeSlots(rs)
+	local fits = {}
+	for i, item in ipairs(vs.bag) do
+		if item.Slots <= free then
+			table.insert(fits, i)
+		end
+	end
+	if #fits == 0 then
+		notify(robber, "Your bag is too full to rob them!", RED)
 		return
 	end
 	rs.lastRob = os.clock()
-	local item = table.remove(vs.bag, math.random(#vs.bag))
+	local item = table.remove(vs.bag, fits[math.random(#fits)])
 	table.insert(rs.bag, item)
 	refreshPlayer(robber)
 	refreshPlayer(victim)
@@ -342,34 +329,101 @@ local function onRob(robber: Player, victim: Player)
 end
 
 --------------------------------------------------------------------------------
--- Lasers
+-- Security: door alarms and cameras
 --------------------------------------------------------------------------------
 
-for i, laser in ipairs(map.lasers) do
-	laser.Touched:Connect(function(hit)
-		if not laser:GetAttribute("On") then
-			return
-		end
+for _, gate in ipairs(map.alarmGates) do
+	gate.Touched:Connect(function(hit)
 		local player = Players:GetPlayerFromCharacter(hit.Parent)
 		local st = player and state[player]
-		if player and isPlaying(st) then
-			if not isAlarmed(player) then
-				notify(player, "ALARM! You tripped a laser. The guards know where you are!", RED)
-			end
+		if player and isPlaying(st) and #st.bag > 0 and not isAlarmed(player) then
 			raiseAlarm(player)
+			notify(player, "BEEP BEEP BEEP! You set off the alarm at the " .. gate.Name .. "!", RED)
 		end
 	end)
-	task.spawn(function()
-		task.wait(i * 0.7)
-		while laser.Parent do
-			laser:SetAttribute("On", true)
-			laser.Transparency = 0.2
-			task.wait(3)
-			laser:SetAttribute("On", false)
-			laser.Transparency = 0.9
-			task.wait(1.5)
+end
+
+local cameras = {}
+for i, part in ipairs(map.cameras) do
+	table.insert(cameras, { part = part, base = part.CFrame, phase = i * 1.3 })
+end
+
+task.spawn(function()
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local sweep = math.rad(Config.CAMERA_SWEEP)
+	local minDot = math.cos(math.rad(Config.CAMERA_FOV))
+	local speed = 2 * math.pi / Config.CAMERA_SWEEP_TIME
+	while true do
+		task.wait(0.15)
+		local t = os.clock()
+		for _, cam in ipairs(cameras) do
+			local pos = cam.base.Position
+			local cf = CFrame.new(pos) * CFrame.Angles(0, math.sin(t * speed + cam.phase) * sweep, 0) * cam.base.Rotation
+			cam.part.CFrame = cf
+			if roundActive then
+				for player, st in pairs(state) do
+					local root = getRoot(player)
+					if root and isPlaying(st) and #st.bag > 0 then
+						local offset = root.Position - pos
+						if offset.Magnitude < Config.CAMERA_RANGE and offset.Unit:Dot(cf.LookVector) > minDot then
+							params.FilterDescendantsInstances = { cam.part, player.Character, guardFolder, lootFolder }
+							if not workspace:Raycast(pos, offset, params) then
+								if not isAlarmed(player) then
+									notify(player, "📷 A security camera spotted you! The guards know where you are!", RED)
+								end
+								raiseAlarm(player)
+							end
+						end
+					end
+				end
+			end
 		end
-	end)
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- Guards: more players means more security
+--------------------------------------------------------------------------------
+
+local guardCtx = {
+	folder = guardFolder,
+	patrolPoints = map.patrolPoints,
+	isTargetable = isTargetable,
+	isAlarmed = isAlarmed,
+	onCatch = onCaught,
+}
+
+local function wantedGuards(): number
+	local count = Config.GUARDS_BASE + math.ceil(#Players:GetPlayers() * Config.GUARDS_PER_PLAYER)
+	return math.min(count, Config.GUARDS_MAX)
+end
+
+local spawningGuards = false
+local function topUpGuards(announceBackup: boolean)
+	if spawningGuards then
+		return
+	end
+	spawningGuards = true
+	local thisRound = roundId
+	local added = 0
+	while roundActive and roundId == thisRound and #guards < wantedGuards() do
+		local spawnPos = map.guardSpawns[#guards % #map.guardSpawns + 1]
+		local guard = GuardAI.new(spawnPos, guardCtx)
+		if not guard then
+			break
+		end
+		if not roundActive or roundId ~= thisRound then
+			guard:destroy()
+			break
+		end
+		table.insert(guards, guard)
+		added += 1
+	end
+	spawningGuards = false
+	if announceBackup and added > 0 then
+		announce(string.format("More thieves showed up... the store called in %d more security guard%s!", added, added == 1 and "" or "s"), RED)
+	end
 end
 
 --------------------------------------------------------------------------------
@@ -540,24 +594,9 @@ local function startRound()
 	roundActive = true
 	table.clear(alarms)
 
-	for _, spawnPart in ipairs(map.lootSpawns) do
-		if math.random() < Config.LOOT_FILL then
-			spawnLoot(spawnPart)
-		end
-	end
-
-	local ctx = {
-		folder = guardFolder,
-		patrolPoints = map.patrolPoints,
-		isTargetable = isTargetable,
-		isAlarmed = isAlarmed,
-		onCatch = onCaught,
-	}
-	for i = 1, Config.GUARD_COUNT do
-		local spawnPos = map.guardSpawns[(i - 1) % #map.guardSpawns + 1]
-		local guard = GuardAI.new(spawnPos, ctx)
-		if guard then
-			table.insert(guards, guard)
+	for _, spot in ipairs(map.lootSpots) do
+		if math.random() < (Items.fill[spot:GetAttribute("Category")] or 0.3) then
+			spawnLoot(spot)
 		end
 	end
 
@@ -569,7 +608,8 @@ local function startRound()
 		sendToStore(player)
 		refreshPlayer(player)
 	end
-	announce("The store is OPEN! Steal everything and escape before time runs out!")
+	announce(string.format("ValueMart is OPEN! Steal what you can and reach a getaway van. %d guards on duty.", wantedGuards()))
+	task.spawn(topUpGuards, false)
 end
 
 local function endRound()
@@ -584,7 +624,7 @@ local function endRound()
 	local results = {}
 	for player, st in pairs(state) do
 		if #st.bag > 0 then
-			notify(player, "Time's up! You didn't escape, so your loot was confiscated.", RED)
+			notify(player, "Time's up! You didn't get away, so your loot was confiscated.", RED)
 		end
 		st.bag = {}
 		st.inRound = false
@@ -614,6 +654,9 @@ while true do
 	startRound()
 	for t = Config.ROUND_TIME, 1, -1 do
 		setStatus("Heist", t)
+		if #guards < wantedGuards() then
+			task.spawn(topUpGuards, true)
+		end
 		task.wait(1)
 	end
 	endRound()

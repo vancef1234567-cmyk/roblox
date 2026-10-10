@@ -1,4 +1,5 @@
 -- Shared settings for Steal the Store. Tweak numbers here to balance the game.
+-- The products themselves (names, prices, models) are in ServerScriptService > Items.
 local Config = {}
 
 -- Rounds
@@ -7,8 +8,7 @@ Config.INTERMISSION_TIME = 20
 Config.MIN_PLAYERS = 1
 
 -- Loot
-Config.LOOT_FILL = 0.55 -- fraction of shelf spots that start with an item
-Config.LOOT_RESPAWN_TIME = 25 -- seconds before an emptied spot restocks
+Config.LOOT_RESPAWN_TIME = 30 -- seconds before an emptied shelf spot restocks
 
 -- Getting caught
 Config.JAIL_TIME = 10
@@ -16,38 +16,48 @@ Config.JAIL_TIME = 10
 -- Robbing other players
 Config.ROB_COOLDOWN = 8
 
--- Guards
-Config.GUARD_COUNT = 3
+-- Guards: GUARDS_BASE + GUARDS_PER_PLAYER for every player in the server, up to GUARDS_MAX.
+-- More guards are called in mid-round when players join.
+Config.GUARDS_BASE = 2
+Config.GUARDS_PER_PLAYER = 1
+Config.GUARDS_MAX = 14
 Config.GUARD_PATROL_SPEED = 10
 Config.GUARD_CHASE_SPEED = 17 -- a little faster than a fresh player (16)
-Config.GUARD_SIGHT_RANGE = 45
+Config.GUARD_SIGHT_RANGE = 55
 Config.GUARD_CATCH_RANGE = 4.5
 Config.ALARM_TIME = 8 -- how long guards know your location after an alarm
 
+-- Security cameras sweep back and forth and spot anyone carrying loot.
+Config.CAMERA_RANGE = 70
+Config.CAMERA_FOV = 22 -- degrees from the centre of the view
+Config.CAMERA_SWEEP = 40 -- degrees each way
+Config.CAMERA_SWEEP_TIME = 8 -- seconds for a full sweep
+
+-- Rarity comes from the item's price: the more it's worth, the longer it takes to grab.
 Config.Rarities = {
-	Common = { Color = Color3.fromRGB(210, 210, 210), HoldTime = 0, Order = 1 },
-	Uncommon = { Color = Color3.fromRGB(90, 220, 90), HoldTime = 0.3, Order = 2 },
-	Rare = { Color = Color3.fromRGB(70, 150, 255), HoldTime = 0.6, Order = 3 },
-	Epic = { Color = Color3.fromRGB(190, 80, 255), HoldTime = 1, Order = 4 },
-	Legendary = { Color = Color3.fromRGB(255, 200, 40), HoldTime = 2, Order = 5 },
+	{ Name = "Common", MinPrice = 0, Color = Color3.fromRGB(220, 220, 220), HoldTime = 0 },
+	{ Name = "Uncommon", MinPrice = 20, Color = Color3.fromRGB(90, 220, 90), HoldTime = 0.3 },
+	{ Name = "Rare", MinPrice = 100, Color = Color3.fromRGB(70, 150, 255), HoldTime = 0.7 },
+	{ Name = "Epic", MinPrice = 1000, Color = Color3.fromRGB(190, 80, 255), HoldTime = 1.2 },
+	{ Name = "Legendary", MinPrice = 10000, Color = Color3.fromRGB(255, 200, 40), HoldTime = 2.5 },
 }
 
--- Weight = how often it spawns compared to the others.
-Config.Items = {
-	{ Name = "Bubble Gum", Value = 5, Weight = 20, Rarity = "Common", Color = Color3.fromRGB(255, 150, 200), Size = Vector3.new(1, 0.5, 0.6) },
-	{ Name = "Soda", Value = 8, Weight = 20, Rarity = "Common", Color = Color3.fromRGB(220, 40, 40), Size = Vector3.new(0.8, 1.6, 0.8) },
-	{ Name = "Chips", Value = 10, Weight = 20, Rarity = "Common", Color = Color3.fromRGB(255, 220, 60), Size = Vector3.new(1.4, 1.8, 0.6) },
-	{ Name = "Bread", Value = 12, Weight = 20, Rarity = "Common", Color = Color3.fromRGB(215, 170, 110), Size = Vector3.new(2, 1, 1) },
-	{ Name = "Cheese Wheel", Value = 40, Weight = 8, Rarity = "Uncommon", Color = Color3.fromRGB(255, 190, 50), Size = Vector3.new(1.6, 0.8, 1.6) },
-	{ Name = "Steak", Value = 60, Weight = 8, Rarity = "Uncommon", Color = Color3.fromRGB(150, 30, 40), Size = Vector3.new(1.6, 0.4, 1.2) },
-	{ Name = "Lobster", Value = 250, Weight = 3, Rarity = "Rare", Color = Color3.fromRGB(255, 80, 40), Size = Vector3.new(2, 0.8, 1) },
-	{ Name = "Fancy Perfume", Value = 400, Weight = 3, Rarity = "Rare", Color = Color3.fromRGB(180, 120, 255), Size = Vector3.new(0.6, 1.2, 0.6) },
-	{ Name = "Golden Watermelon", Value = 5000, Weight = 0.8, Rarity = "Epic", Color = Color3.fromRGB(255, 215, 0), Size = Vector3.new(1.8, 1.8, 1.8), Shape = Enum.PartType.Ball },
-	{ Name = "Gaming Console", Value = 12000, Weight = 0.8, Rarity = "Epic", Color = Color3.fromRGB(25, 25, 30), Size = Vector3.new(1.8, 0.5, 1.2) },
-	{ Name = "Diamond Cereal", Value = 1000000, Weight = 0.15, Rarity = "Legendary", Color = Color3.fromRGB(120, 255, 255), Size = Vector3.new(1.2, 2, 0.6) },
-}
+for order, rarity in ipairs(Config.Rarities) do
+	rarity.Order = order
+end
 
--- Level 1 is what every player starts with.
+function Config.rarityFor(price: number)
+	local found = Config.Rarities[1]
+	for _, rarity in ipairs(Config.Rarities) do
+		if price >= rarity.MinPrice then
+			found = rarity
+		end
+	end
+	return found
+end
+
+-- Level 1 is what every player starts with. Backpack values are bag slots
+-- (most items take 1 slot, big TVs take more).
 Config.Upgrades = {
 	Backpack = {
 		Title = "Bigger Backpack",
@@ -55,10 +65,11 @@ Config.Upgrades = {
 		Levels = {
 			{ Value = 3, Cost = 0 },
 			{ Value = 5, Cost = 150 },
-			{ Value = 8, Cost = 750 },
-			{ Value = 12, Cost = 4000 },
-			{ Value = 20, Cost = 25000 },
-			{ Value = 35, Cost = 250000 },
+			{ Value = 8, Cost = 600 },
+			{ Value = 12, Cost = 2500 },
+			{ Value = 20, Cost = 10000 },
+			{ Value = 30, Cost = 40000 },
+			{ Value = 50, Cost = 150000 },
 		},
 	},
 	Speed = {
@@ -68,9 +79,9 @@ Config.Upgrades = {
 			{ Value = 16, Cost = 0 },
 			{ Value = 18, Cost = 200 },
 			{ Value = 20, Cost = 1000 },
-			{ Value = 22, Cost = 6000 },
-			{ Value = 24, Cost = 40000 },
-			{ Value = 26, Cost = 300000 },
+			{ Value = 22, Cost = 5000 },
+			{ Value = 24, Cost = 20000 },
+			{ Value = 26, Cost = 75000 },
 		},
 	},
 }

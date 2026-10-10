@@ -205,7 +205,7 @@ local function refreshBag()
 		bagLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
 		return
 	end
-	local count = player:GetAttribute("BagCount") or 0
+	local count = player:GetAttribute("BagSlots") or 0
 	local cap = player:GetAttribute("Capacity") or 0
 	local value = player:GetAttribute("BagValue") or 0
 	bagLabel.Text = string.format("🎒 %d/%d   💰 %s", count, cap, formatMoney(value))
@@ -250,7 +250,7 @@ closeButton.Activated:Connect(function()
 	shopFrame.Visible = false
 end)
 
-for _, attr in ipairs({ "BagCount", "BagValue", "Capacity", "Jailed" }) do
+for _, attr in ipairs({ "BagSlots", "BagValue", "Capacity", "Jailed" }) do
 	player:GetAttributeChangedSignal(attr):Connect(refreshBag)
 end
 for _, attr in ipairs({ "BackpackLevel", "SpeedLevel" }) do

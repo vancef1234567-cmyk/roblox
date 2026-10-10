@@ -210,8 +210,18 @@ function GuardAI:run()
 		if target then
 			self:chase(target)
 		else
-			local points = self.ctx.patrolPoints
-			local goal = points[math.random(#points)]
+			-- Patrol to a nearby point so guards spread out instead of crossing the whole store.
+			local nearby = {}
+			for _, point in ipairs(self.ctx.patrolPoints) do
+				local dist = (point - self.root.Position).Magnitude
+				if dist > 10 and dist < 80 then
+					table.insert(nearby, point)
+				end
+			end
+			if #nearby == 0 then
+				nearby = self.ctx.patrolPoints
+			end
+			local goal = nearby[math.random(#nearby)]
 			self:walkTo(goal, 12, function()
 				return self:findTarget() ~= nil
 			end)
