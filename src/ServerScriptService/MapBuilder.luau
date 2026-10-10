@@ -113,6 +113,12 @@ local function collectPositions(folder: Instance): { Vector3 }
 end
 
 function MapBuilder.read(model: Model)
+	-- Only the lobby spawn should be used.
+	for _, d in ipairs(workspace:GetDescendants()) do
+		if d:IsA("SpawnLocation") and not d:IsDescendantOf(model) then
+			d.Enabled = false
+		end
+	end
 	local markers = model:WaitForChild("Markers")
 	return {
 		model = model,
@@ -309,13 +315,6 @@ function MapBuilder.build()
 	marker(markers, "Jail", JAIL_POS + Vector3.new(0, 1, 0))
 
 	model.Parent = workspace
-
-	for _, d in ipairs(workspace:GetDescendants()) do
-		if d:IsA("SpawnLocation") and d ~= spawn then
-			d.Enabled = false
-		end
-	end
-
 	return MapBuilder.read(model)
 end
 
